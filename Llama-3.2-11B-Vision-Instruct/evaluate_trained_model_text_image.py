@@ -25,12 +25,28 @@ def get_dataset(tokenizer, task, split):
     if task == "informative":
         ds = load_dataset("xiaoxl/crisismmd2inf")
         dataset = ds[split]
-        instruction = "You are an data expert in crisis management with many years of experience. \
-        You are classifying the following tweet containing both text and image for crisis management. There are two categories to label the tweets: \
-        '1: informative', '0: not_informative'. \
-         if a tweet text and image both provide relevant and useful information that could help crisis management during a crisis, the tweet is informative, \
-        then reply '1: informative' and only that, no additional words, otherwise, the tweet is not informative, reply '0: not_informative' and only that, no additional words. Tweet text is: {}, \
-        the classification is:"
+        # instruction = (
+        #     "Do the given text and image provide useful information that could help during a crisis?"
+        #     "Respond with '1' if the text and the image provide any crisis-related details, and '0' if they do not."
+        #     "Instructions: "
+        #     "- Prioritize identifying texts and images with relevant crisis details."
+        #     "- Avoid being overly restrictive."
+        #     "- If the meaning of the image and text are unclear, respond with '0'."
+        #     "- Do not output extra text. Repond with only '0' or '1'."
+        #     "Tweet text is: {}"
+        #     "The classification is:"
+        # )
+        instruction = ("You are a data expert in crisis management with many years of experience."
+                       "You are classifying the following tweet containing both text and image for crisis management."
+                       "There are two categories to label the tweets: 'informative' and 'not_informative'."
+                        "Respond with 'informative' if the text and the image provide any crisis-related details, and 'not_informative' if they do not."
+                        "Instructions: \n"
+                        "- Prioritize identifying texts and images with relevant crisis details.\n"
+                        "- Avoid being overly restrictive.\n"
+                        "- If the meaning of the image and text are unclear, respond with 'not_informative'.\n"
+                        "- Do not output extra text. Respond with only 'informative' or 'not_informative'.\n"
+                        "Tweet text is: {}\n"
+                        "The classification is:")
         converted_dataset = [tokenizer.apply_chat_template(convert_to_conversation(instruction, example), add_generation_prompt = True) for example in dataset]
         return (dataset, converted_dataset)
 
@@ -71,7 +87,7 @@ def get_dataset(tokenizer, task, split):
             "- General texts and photos that could be from any time/place\n" 
             "- Texts and images without clear crisis impact or response\n"
             "- Texts are not related to a crisis with stock photos or promotional images\n"
-            "- Any text and image that doesn't definitively fit categories 0-3\n\n"
+            "- Any text and image that doesn't definitively fit categories\n\n"
             
             "Important:\n"
             "- If there's ANY sign of rescue or donation, pick 1.\n"
@@ -79,7 +95,7 @@ def get_dataset(tokenizer, task, split):
             "- If there's ANY sign of obviously distressed or harmed people, pick 0.\n"
             "- If the text and image are definitely about a crisis but you DO NOT see rescue/damage/impacted people, pick 3.\n"
             "- Otherwise, pick 4. Also, when you are not sure which number to pick, pick 4.\n"
-            "Answer with just a single digit (0–4).\n\n"
+            "You can only answer with just a single digit '0', '1', '2', '3', or '4', no extra words allowed.\n\n"
 
             "Tweet text is: {}.\n"
             "the classification is:"
@@ -99,9 +115,12 @@ def convert_to_conversation(instruction, example):
         ]}
     ]
 
-def start_inference(model, tokenizer, dataset, converted_dataset, model_path, split):
+def start_inference(model, tokenizer, dataset, converted_dataset, model_path, output_path, split):
     results = []
-    result_path = model_path.strip('/') + f"/results_{split}.json"
+    if model_path == 'unsloth/Llama-3.2-11B-Vision-Instruct':
+        result_path = output_path.strip('/') + f"/results_{split}.json"
+    else:
+        result_path = model_path.strip('/') + f"/results_{split}.json"
     counter, invalid_count = 0, 0
     for input_text, data in zip(converted_dataset, dataset):
         image = data['image']
@@ -125,7 +144,9 @@ def start_inference(model, tokenizer, dataset, converted_dataset, model_path, sp
         # result = tokenizer.decode(output[0])
         # y_pred = result.split("assistant<|end_header_id|>")[1][:-10].strip("\n")
         y_pred = tokenizer.decode(output[0][inputs['input_ids'].shape[-1]:], skip_special_tokens=True)
-        # print(f"counter: y_pred\n{counter}: {y_pred}\n")
+        print(f"counter: {counter}, y_pred: {y_pred}\n")
+        # print(f"input_text: {input_text}\n\n")
+        
         
         if y_pred is None: # ignore the invalid results
             invalid_count += 1
@@ -150,8 +171,10 @@ if __name__ == "__main__":
     start_time = time.time()
     
     parser = argparse.ArgumentParser(description='Inference configuration parameters')
-    parser.add_argument('--model_path', type=str, default='./lora_model',
-                    help='Directory to load model (default: ./lora_model)')
+    parser.add_argument('--model_path', type=str, default='unsloth/Llama-3.2-11B-Vision-Instruct',
+                    help='Directory to load model (default: unsloth/Llama-3.2-11B-Vision-Instruct)')
+    parser.add_argument('--output_path', type=str, default='./',
+                    help='Directory to save model evaluation results (default: ./)')
     # parser.add_argument('--temperature', type=float, default='0.1',
     #                 help='Inference temperature (default: 0.1)')
     parser.add_argument('--task', type=str, default="informative", 
@@ -160,6 +183,7 @@ if __name__ == "__main__":
                         help='split: "test" or "dev" or "train" or "all", default="test"')
     args = parser.parse_args()
     model_path = args.model_path
+    output_path = args.output_path
     # temperature = args.temperature
     task = args.task
     split = args.split
@@ -170,11 +194,11 @@ if __name__ == "__main__":
         for split in ['test', 'dev', 'train']:
             print(f"inferencing on {split} dataset.\n")
             dataset, converted_dataset = get_dataset(tokenizer, task, split)
-            start_inference(model, tokenizer, dataset, converted_dataset, model_path, split)
+            start_inference(model, tokenizer, dataset, converted_dataset, model_path, output_path, split)
     else:
         dataset, converted_dataset = get_dataset(tokenizer, task, split)
         if dataset and converted_dataset:
-            start_inference(model, tokenizer, dataset, converted_dataset, model_path, split)
+            start_inference(model, tokenizer, dataset, converted_dataset, model_path, output_path, split)
     
     end_time = time.time()
     print(f"\n{'-'*80}\ncommand: {args}\n{'-'*80}\n")

@@ -1,7 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-# %%
-
 import sys, argparse, time, os
 from unsloth import FastVisionModel # FastLanguageModel for LLMs
 import torch
@@ -10,6 +6,11 @@ from unsloth import is_bf16_supported
 from unsloth.trainer import UnslothVisionDataCollator
 from trl import SFTTrainer, SFTConfig
 
+unsloth_models = [
+    "unsloth/Llama-3.2-11B-Vision-Instruct",
+    "unsloth/Qwen2-VL-7B-Instruct",
+]
+
 def get_model_and_tokenizer(model_path, ft_layers, lora_config):
     lora_r, lora_alpha, lora_dropout = lora_config
     model, tokenizer = FastVisionModel.from_pretrained(
@@ -17,7 +18,7 @@ def get_model_and_tokenizer(model_path, ft_layers, lora_config):
         load_in_4bit = False, # Use 4bit to reduce memory use. False for 16bit LoRA.
         use_gradient_checkpointing = "unsloth", # True or "unsloth" for long context
     )
-    if model_path == "unsloth/Llama-3.2-11B-Vision-Instruct": # start from scratch, not checkpoint
+    if model_path in unsloth_models: # start from scratch, not checkpoint
         model = FastVisionModel.get_peft_model(
             model,
             finetune_vision_layers     = ft_layers[0], # False if not finetuning vision layers
@@ -41,14 +42,20 @@ def get_dataset(task):
     if task == "informative":
         ds = load_dataset("xiaoxl/crisismmd2inf")
         dataset = ds["train"]
-        instruction = "You are an data expert in crisis management with many years of experience. \
-You are classifying the following tweet containing both text and image for crisis management. There are two categories to label the tweets: \
-'1: informative', '0: not_informative'. \
- if a tweet text and image both provide relevant and useful information that could help crisis management during a crisis, the tweet is informative, \
-then reply 'informative' and only that, no additional words, otherwise, the tweet is not informative, reply 'not_informative' and only that, no additional words. Tweet text is: {}, \
-the classification is:"
+        instruction = ("You are a data expert in crisis management with many years of experience."
+                       "You are classifying the following tweet containing both text and image for crisis management."
+                       "There are two categories to label the tweets: 'informative' and 'not_informative'."
+                        "Respond with 'informative' if the text and the image provide any crisis-related details, and 'not_informative' if they do not."
+                        "Instructions: \n"
+                        "- Prioritize identifying texts and images with relevant crisis details.\n"
+                        "- Avoid being overly restrictive.\n"
+                        "- If the meaning of the image and text are unclear, respond with 'not_informative'.\n"
+                        "- Do not output extra text. Respond with only 'informative' or 'not_informative'.\n"
+                        "Tweet text is: {}\n"
+                        "The classification is:")
         converted_dataset = [convert_to_conversation(instruction, sample) for sample in dataset]
         return (dataset, converted_dataset)
+    
     elif task == "humanitarian":
         ds = load_dataset("xiaoxl/crisismmd2hum")
         dataset = ds["train"]
@@ -86,7 +93,7 @@ the classification is:"
             "- General texts and photos that could be from any time/place\n" 
             "- Texts and images without clear crisis impact or response\n"
             "- Texts are not related to a crisis with stock photos or promotional images\n"
-            "- Any text and image that doesn't definitively fit categories 0-3\n\n"
+            "- Any text and image that doesn't definitively fit categories\n\n"
             
             "Important:\n"
             "- If there's ANY sign of rescue or donation, pick 1.\n"
@@ -94,7 +101,7 @@ the classification is:"
             "- If there's ANY sign of obviously distressed or harmed people, pick 0.\n"
             "- If the text and image are definitely about a crisis but you DO NOT see rescue/damage/impacted people, pick 3.\n"
             "- Otherwise, pick 4. Also, when you are not sure which number to pick, pick 4.\n"
-            "Answer with just a single digit (0–4).\n\n"
+            "You can only answer with just a single digit '0', '1', '2', '3', or '4', no extra words allowed.\n\n"
 
             "Tweet text is: {}.\n"
             "the classification is:"
@@ -131,31 +138,6 @@ def convert_to_conversation_text_only(instruction, sample):
         },
     ]
     return { "messages" : conversation }
-
-# data collator for text only
-def collate_fn(examples): 
-    # Extract the messages in the correct format
-    processed_examples = [example['messages'] for example in examples]
-
-    # Apply the chat template to each example
-    texts = [tokenizer.apply_chat_template(messages, tokenize=False)
-            for messages in processed_examples]
-
-    # Tokenize the texts
-    batch = tokenizer(
-        text=texts,
-        images=None,
-        return_tensors="pt",
-        padding=True
-    )
-
-    # Create labels from the input_ids
-    labels = batch["input_ids"].clone()
-    labels[labels == tokenizer.tokenizer.pad_token_id] = -100
-
-    batch["labels"] = labels
-
-    return batch
 
 def start_training(model, tokenizer, data_collator, converted_dataset, learning_rate, epoch, batch_size, output_dir, gradient_accumulation_steps, logging_steps):
     FastVisionModel.for_training(model) # Enable for training!
@@ -222,7 +204,11 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='Training configuration parameters')
     parser.add_argument('--model_path', type=str, default='unsloth/Llama-3.2-11B-Vision-Instruct',
-                        help='Directory to load model (default: "unsloth/Llama-3.2-11B-Vision-Instruct")')
+                        help=('Directory to load model (default: "unsloth/Llama-3.2-11B-Vision-Instruct")'
+                              'model lists:\n'
+                              'unsloth/Qwen2-VL-7B-Instruct\n'
+                              "unsloth/Llama-3.2-11B-Vision-Instruct\n"
+                        ))
     parser.add_argument('--learning_rate', type=float, default=1e-4,
                         help='Learning rate for optimizer (default: 1e-4)')
     parser.add_argument('--epoch', type=float, default=3,
