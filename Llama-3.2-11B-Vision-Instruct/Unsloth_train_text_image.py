@@ -9,7 +9,9 @@ from trl import SFTTrainer, SFTConfig
 unsloth_models = [
     "unsloth/Llama-3.2-11B-Vision-Instruct",
     "unsloth/Qwen2.5-VL-7B-Instruct",
+    "unsloth/Qwen2-VL-7B-Instruct",
     "unsloth/Qwen2.5-VL-7B-Instruct-unsloth-bnb-4bit",
+    "unsloth/Pixtral-12B-2409"
     
 ]
 
